@@ -1,0 +1,102 @@
+{
+  "rows": [
+    {
+      "channel": "awgn",
+      "mode": "baseline",
+      "psnr_mean": 25.183246612548828,
+      "psnr_std": 1.9685355424880981,
+      "psnr_p10": 22.57361602783203,
+      "psnr_p05": 21.91809844970703,
+      "ssim_mean": 0.6812915205955505,
+      "ssim_std": 0.07781866192817688,
+      "ssim_p10": 0.5755773186683655,
+      "ssim_p05": 0.5436975955963135,
+      "latent_cosine_mean": 0.9999454617500305,
+      "latent_cosine_std": 2.26852444029646e-05,
+      "latent_cosine_p10": 0.9999148845672607,
+      "latent_cosine_p05": 0.9999032020568848,
+      "latent_cka_mean": 0.982321560382843,
+      "latent_cka_std": 0.013188178651034832,
+      "latent_cka_p10": 0.9681724309921265,
+      "latent_cka_p05": 0.9605953097343445
+    }
+  ],
+  "checkpoint": "outputs/base_channel_diffusion_controls_login/awgn/diffusion/ckpt_best.pt",
+  "config": {
+    "seed": 42,
+    "device": "cuda",
+    "require_cuda": true,
+    "output_dir": "outputs/base_channel_diffusion_controls_login/awgn/diffusion",
+    "stage": "diffusion",
+    "epochs": 500,
+    "batch_size": 6,
+    "val_batch_size": 8,
+    "num_workers": 6,
+    "save_every": 999999,
+    "val_every": 5,
+    "max_val_batches": 32,
+    "sampler_steps": 18,
+    "dataset": {
+      "train_root": "/scratch/nickyun/hf_datasets/ffhq_raw/train",
+      "val_root": "/scratch/nickyun/hf_datasets/ffhq_raw/val",
+      "img_size": 224
+    },
+    "model": {
+      "swin_ckpt": "diffusion_model_ckpt/v1_ckpt_ffhq_222_500_09.pt",
+      "diffusion_ckpt": "diffusion_model_ckpt/v2_edm_ffhq_ckpt_latent_222_470_10.pt",
+      "edm_variant": "pilotless",
+      "oracle_use_token": false,
+      "token_dim": 64,
+      "codebook_size": 1024,
+      "num_experts": 10,
+      "expert_rank": 12,
+      "freeze_edm_backbone": false
+    },
+    "resume": "outputs/base_channel_diffusion_controls_login/awgn/diffusion/ckpt_last.pt",
+    "channel_input_size": 64,
+    "optim": {
+      "lr_transport": 0.0002,
+      "lr_diffusion": 0.0001,
+      "lr_joint": 7.5e-05,
+      "lr_edm_multiplier": 0.2,
+      "weight_decay": 0.01,
+      "grad_clip_norm": 0.5
+    },
+    "loss": {
+      "lambda_vq": 0.35,
+      "lambda_router": 0.05,
+      "lambda_router_channel_cls": 0.2,
+      "lambda_diffusion": 1.0,
+      "lambda_image_recon": 0.0,
+      "lambda_h_privileged": 0.0,
+      "lambda_channel_cls": 0.25,
+      "lambda_aux": 0.05
+    },
+    "channel": {
+      "backend": "sionna",
+      "specs": [
+        {
+          "name": "awgn",
+          "probability": 1.0,
+          "snr_db_min": 0,
+          "snr_db_max": 20
+        }
+      ]
+    },
+    "control_study": "base_channel_specific_diffusion",
+    "eval": {
+      "modes": [
+        "baseline"
+      ]
+    },
+    "ablation": {
+      "items": []
+    },
+    "comparison": {
+      "entries": [],
+      "external_csvs": []
+    }
+  },
+  "eval_root": "/scratch/nickyun/hf_datasets/ffhq_raw/val",
+  "strict_checkpoint_loading": true
+}

@@ -1,0 +1,10 @@
+torch
+torchvision
+torchaudio
+einops
+tqdm
+numpy
+spicy
+opencv
+transformers
+timm

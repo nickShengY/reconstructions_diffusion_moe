@@ -1,0 +1,59 @@
+{
+  "seed": 42,
+  "device": "cuda",
+  "require_cuda": true,
+  "sampler_steps": 18,
+  "num_workers": 6,
+  "val_batch_size": 8,
+  "dataset": {
+    "train_root": "/scratch/nickyun/hf_datasets/ffhq_raw/train",
+    "val_root": "/scratch/nickyun/hf_datasets/ffhq_raw/val",
+    "img_size": 224
+  },
+  "model": {
+    "swin_ckpt": "diffusion_model_ckpt/v1_ckpt_ffhq_222_500_09.pt",
+    "token_dim": 64,
+    "codebook_size": 256,
+    "num_experts": 4,
+    "expert_rank": 8
+  },
+  "channel": {
+    "backend": "sionna"
+  },
+  "eval": {
+    "modes": [
+      "transport",
+      "diffusion_no_token",
+      "diffusion_token"
+    ]
+  },
+  "ablation": {
+    "items": [
+      "full",
+      "no_diffusion",
+      "no_token",
+      "single_expert",
+      "no_vq"
+    ]
+  },
+  "comparison": {
+    "entries": [
+      {
+        "name": "ours_full",
+        "checkpoint": "outputs/research/joint/ckpt_best.pt",
+        "mode": "diffusion_token"
+      },
+      {
+        "name": "ours_transport",
+        "checkpoint": "outputs/research/joint/ckpt_best.pt",
+        "mode": "transport"
+      },
+      {
+        "name": "ours_no_token",
+        "checkpoint": "outputs/research/joint/ckpt_best.pt",
+        "mode": "diffusion_no_token"
+      }
+    ],
+    "external_csvs": []
+  }
+}

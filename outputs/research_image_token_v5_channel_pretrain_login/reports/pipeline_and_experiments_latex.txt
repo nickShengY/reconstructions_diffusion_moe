@@ -1,0 +1,270 @@
+\section{Channel-Tokenized Diffusion Receiver Pipeline}
+\label{sec:channel_tokenized_pipeline}
+
+We study image reconstruction over wireless channels. The goal is to recover a high-quality image after the transmitted image representation has been corrupted by channel noise, fading, and other wireless impairments. Our receiver combines three components: a frozen image autoencoder, a channel-aware tokenizer, and a token-guided diffusion refiner. An autoencoder is a neural network that maps an image into a compact hidden representation and then maps that representation back to an image. In our system, the encoder and decoder of the image autoencoder are kept fixed, so the proposed receiver learns how to repair the corrupted representation rather than learning a new image codec from scratch.
+
+Let $x$ denote the original image. The frozen encoder maps $x$ to a clean latent representation $z$. A latent representation is a lower-dimensional feature tensor that preserves the semantic and visual content needed for reconstruction. To simulate transmission, the image is first passed through a wireless channel model, producing a corrupted observation. The frozen encoder then maps this corrupted observation to a noisy latent representation $\tilde{z}$. The receiver therefore operates on $\tilde{z}$ and must estimate a restored latent representation $\hat{z}$ that can be decoded into the reconstructed image $\hat{x}$.
+
+\subsection{Channel-Aware Tokenizer}
+\label{subsec:channel_tokenizer}
+
+The channel-aware tokenizer converts the noisy latent representation $\tilde{z}$ into a compact token representation that describes how the receiver should correct the channel distortion. A token is a learned vector used as side information for the reconstruction model. In this work, the token is not a text token. It is a learned channel-and-image representation that summarizes useful information from the corrupted latent features.
+
+The receiver is configured for a $24$-channel latent tensor. The tokenizer first reshapes the noisy latent representation from a spatial tensor into a sequence of latent positions. It then applies one-dimensional convolutional layers along this sequence. A one-dimensional convolution is a local neural operation that processes neighboring positions in a sequence. Here, it lets the tokenizer observe local channel distortion patterns across the latent representation. The tokenizer uses a hidden width of $128$ and maps the $24$ input channels to $64$-dimensional token features. The tokenizer produces a sequence of token features:
+\begin{equation}
+    E = T_{\theta}(\tilde{z}),
+\end{equation}
+where $T_{\theta}(\cdot)$ is the tokenizer network and $E \in \mathbb{R}^{B \times L \times d}$ is the token-feature sequence for a batch size $B$, sequence length $L$, and token dimension $d$.
+
+We use vector quantization to make the token representation discrete and structured. Vector quantization means that a continuous feature vector is replaced by the closest entry in a learned codebook. A codebook is a set of learnable prototype vectors. In our implementation, the codebook contains $1024$ prototype vectors, and each token vector has dimension $64$. For each token feature $E_i$, the nearest codebook entry is selected:
+\begin{equation}
+    q_i = c_{k^\star}, \qquad
+    k^\star = \arg\min_k \|E_i - c_k\|_2^2 ,
+\end{equation}
+where $c_k$ is the $k$-th codebook vector. The resulting quantized token sequence is denoted $Q$.
+
+The codebook is trained with a vector-quantization loss. This loss has two standard roles. First, a codebook loss moves the selected codebook vectors toward the tokenizer outputs. Second, a commitment loss encourages the tokenizer outputs to stay close to the selected codebook vectors. We also use a diversity term to encourage broad use of the codebook and a confidence term to encourage stable assignments. Together, these terms prevent the codebook from collapsing to only a few entries and encourage the token sequence to represent recurring channel distortion patterns.
+
+Because nearest-neighbor selection is discrete, gradients cannot pass through it directly in the usual way. We therefore use a straight-through estimator. A straight-through estimator is a training technique that uses the discrete quantized token in the forward pass but passes gradients approximately through the continuous tokenizer output in the backward pass. This allows the reconstruction and diffusion losses to train the tokenizer even though the token assignment itself is discrete.
+
+The quantized token sequence is mean-pooled into a global channel token:
+\begin{equation}
+    t_{\mathrm{global}} = \frac{1}{L}\sum_{i=1}^{L} Q_i .
+\end{equation}
+Mean pooling means averaging token features over all latent positions. The global token summarizes the channel-corrupted image representation into one compact vector. This global token is then used in three ways: it routes the mixture-of-experts receiver, it modulates the restored latent representation, and it conditions the diffusion refiner.
+
+The tokenizer therefore produces two reconstruction-related outputs. The first output is a restored latent representation, denoted $z_{\mathrm{tr}}$, which provides the spatial condition for the diffusion refiner. The second output is the learned token $t$, which provides compact channel-aware side information to the diffusion refiner. This design separates the receiver into two roles: latent restoration and compact channel-aware condition generation.
+
+\subsection{Mixture-of-Experts Receiver}
+\label{subsec:moe_receiver}
+
+Wireless channels can produce different types of degradation. For example, additive noise, multipath fading, and mobility-induced impairments affect images in different ways. To handle this variation, the receiver uses a mixture-of-experts module. A mixture of experts is a neural architecture with multiple specialized sub-networks, called experts, and a routing function that decides how strongly each expert should contribute for a given input.
+
+In our receiver, the router takes the global token $t_{\mathrm{global}}$ as input and predicts expert weights. The router is implemented as a two-layer multilayer perceptron. A multilayer perceptron is a feed-forward neural network made of linear layers and nonlinear activation functions. The router maps the $64$-dimensional global token to $10$ expert scores:
+\begin{equation}
+    \pi = \mathrm{softmax}(R_{\phi}(t_{\mathrm{global}})),
+\end{equation}
+where $R_{\phi}(\cdot)$ is the router network and $\pi$ is a probability vector over experts. The softmax function converts router scores into nonnegative weights that sum to one. The router therefore makes a soft decision rather than choosing only one expert.
+
+Each expert is a residual correction block. A residual block predicts a correction that is added back to its input, which makes it suitable for repairing a noisy latent representation without discarding useful information already present in that representation. Each expert contains spatial convolutional layers and a lightweight low-rank adapter. A low-rank adapter is a parameter-efficient module that learns a compact correction through a small bottleneck dimension. If the expert outputs are denoted by $F_1(\tilde{z}), \ldots, F_M(\tilde{z})$, the mixture output is
+\begin{equation}
+    z_{\mathrm{mix}} = \sum_{m=1}^{M} \pi_m F_m(\tilde{z}),
+\end{equation}
+where $M$ is the number of experts. In our implementation, $M=10$. Each expert uses a low-rank adapter with rank $12$, which controls the bottleneck size of the lightweight correction path.
+
+The global token also produces an affine modulation of the mixed expert output. Affine modulation means applying a learned scale and shift to the feature channels. The token is mapped to channel-wise scale and shift vectors, denoted $s(t)$ and $b(t)$, for the $24$ latent channels, and the restored latent representation is computed as
+\begin{equation}
+    z_{\mathrm{tr}} = z_{\mathrm{mix}} \odot (1 + s(t)) + b(t),
+\end{equation}
+where $\odot$ denotes element-wise multiplication. This operation lets the token adjust the strength and bias of each latent channel after expert mixing.
+
+The router is trained with a balance objective. A balance objective encourages the model to use all experts across the dataset while still allowing each sample to have a confident routing pattern. This prevents a degenerate solution where all inputs are routed to the same expert. The receiver also includes an auxiliary channel-classification head. A channel-classification head is a small classifier that predicts the channel type from the learned token. This auxiliary task encourages the token to encode channel-discriminative information, which helps both expert routing and diffusion conditioning.
+
+This design allows the receiver to adapt its behavior across different channel conditions without requiring a separate model for each channel. The single-expert ablation in Section~\ref{subsec:ablation_results} shows a large performance drop, which suggests that multiple experts and adaptive routing are necessary for the channel diversity considered in this work.
+
+\subsection{Token-Guided Diffusion Refinement}
+\label{subsec:token_guided_diffusion}
+
+After the tokenizer and mixture-of-experts receiver produce the restored latent representation $z_{\mathrm{tr}}$ and token $t$, the diffusion refiner predicts a higher-quality latent representation. A diffusion model is a generative model that learns to remove noise step by step. In this pipeline, the diffusion model does not generate an image from scratch. Instead, it refines the receiver output in the latent space of the frozen autoencoder.
+
+The diffusion refiner is conditioned on two inputs. The first condition is the restored latent representation $z_{\mathrm{tr}}$, which provides spatial and visual information. The second condition is the learned token $t$, which provides compact channel-aware side information. The refined latent representation is denoted $z_{\mathrm{diff}}$. The final image is reconstructed by the frozen decoder:
+\begin{equation}
+    \hat{x} = D(z_{\mathrm{diff}}),
+\end{equation}
+where $D(\cdot)$ is the frozen decoder.
+
+This structure is important because the experiments show that the tokenizer is useful mainly when its token is consumed by the diffusion refiner. Using the tokenizer-restored latent representation alone is not enough to obtain the full gain. The best performance is obtained when the restored latent representation and the learned token are used together.
+
+\subsection{Gradient Flow and Tokenizer Optimization}
+\label{subsec:tokenizer_optimization}
+
+The tokenizer is trained through several complementary signals. The first signal is a latent restoration loss. A restoration loss measures the difference between the restored latent representation $z_{\mathrm{tr}}$ and the clean latent representation $z$. This loss directly trains the receiver and experts to undo channel corruption:
+\begin{equation}
+    \mathcal{L}_{\mathrm{tr}} = \|z_{\mathrm{tr}} - z\|_2^2 .
+\end{equation}
+
+The second signal is the diffusion denoising loss. A denoising loss trains a diffusion model to predict or remove noise from a corrupted latent variable. In our pipeline, the diffusion model is conditioned on $z_{\mathrm{tr}}$ and $t$. Therefore, when the receiver and diffusion model are trained together, the diffusion loss sends gradients back through both the restored latent path and the token path. This is the main mechanism by which the tokenizer learns tokens that are useful for diffusion refinement rather than merely useful for direct reconstruction.
+
+The third signal is the vector-quantization loss described in Section~\ref{subsec:channel_tokenizer}. This loss trains the codebook and keeps the tokenizer outputs close to valid codebook entries. The fourth signal is the router loss described in Section~\ref{subsec:moe_receiver}. This loss keeps expert usage balanced and prevents expert collapse. The fifth signal is the auxiliary channel-classification loss, which encourages the token to encode information about the channel condition. The sixth signal is an auxiliary router classification loss, which encourages the router scores to remain sensitive to the channel condition.
+
+The joint training objective can be written as
+\begin{equation}
+    \mathcal{L}
+    =
+    \mathcal{L}_{\mathrm{tr}}
+    + \lambda_{\mathrm{img}}\mathcal{L}_{\mathrm{img}}
+    + \lambda_{\mathrm{diff}}\mathcal{L}_{\mathrm{diff}}
+    + \lambda_{\mathrm{aux}}
+    \left(
+        \lambda_{\mathrm{vq}}\mathcal{L}_{\mathrm{vq}}
+        + \lambda_{\mathrm{router}}\mathcal{L}_{\mathrm{router}}
+        + \lambda_{\mathrm{cls}}\mathcal{L}_{\mathrm{cls}}
+        + \lambda_{\mathrm{rcls}}\mathcal{L}_{\mathrm{rcls}}
+    \right),
+\end{equation}
+where $\mathcal{L}_{\mathrm{img}}$ is an image-space reconstruction loss after decoding, $\mathcal{L}_{\mathrm{diff}}$ is the diffusion denoising loss, $\mathcal{L}_{\mathrm{vq}}$ is the vector-quantization loss, $\mathcal{L}_{\mathrm{router}}$ is the router balance loss, $\mathcal{L}_{\mathrm{cls}}$ is the auxiliary channel-classification loss from the token, and $\mathcal{L}_{\mathrm{rcls}}$ is an auxiliary router classification loss that encourages channel-sensitive expert routing. The $\lambda$ terms are scalar weights that control the relative importance of each loss term.
+
+This training objective has an important interpretation. The latent restoration loss teaches the receiver to produce a usable reconstruction by itself. The image-space reconstruction loss aligns the decoded output with the original image. The diffusion loss teaches the token to carry information that improves iterative refinement. The vector-quantization loss makes the token discrete and stable. The router loss makes the expert system use its capacity effectively. The channel-classification and router-classification losses make the token and router sensitive to the wireless channel condition. These signals are jointly responsible for making the tokenizer a channel-aware representation rather than a generic feature projection.
+
+\subsection{Training Procedure}
+\label{subsec:training_procedure}
+
+The training procedure has two conceptual stages. The first stage adapts the diffusion refiner to channel-corrupted autoencoder latents. In this stage, the noisy latent representation is used as the conditioning input and the clean latent representation is used as the target. This prepares the diffusion refiner to operate on wireless-channel distortions before the full tokenizer path is introduced. The second stage jointly trains the tokenizer, router, expert modules, and token-conditioned diffusion behavior across different channel conditions. In this stage, the diffusion refiner receives the restored latent representation $z_{\mathrm{tr}}$ and the learned token $t$, so the diffusion loss can shape the token representation and the expert routing decisions. The autoencoder remains frozen throughout the procedure, so improvements come from the receiver, tokenizer, expert routing, and diffusion-conditioning modules rather than from changing the image encoder or decoder.
+
+The main training objective is image reconstruction quality. The model is encouraged to produce reconstructed images that match the original images after wireless channel corruption. Additional latent-space objectives are used to make the restored latent representation consistent with the clean latent representation. These objectives encourage the receiver to preserve both visual quality and feature-level structure.
+
+\section{Experimental Setup and Results}
+\label{sec:experiments}
+
+\subsection{Dataset and Evaluation Protocol}
+\label{subsec:dataset_protocol}
+
+We evaluate the proposed pipeline on the Flickr-Faces-HQ dataset, abbreviated as FFHQ. FFHQ is a face image dataset commonly used for image generation and image reconstruction studies. Each image is resized to $224 \times 224$ pixels before being passed through the system. For channel simulation, the image is represented on a $64 \times 64$ channel grid, corrupted by the selected wireless channel, and then mapped back to the autoencoder input resolution before latent encoding. The frozen image autoencoder maps the channel-corrupted observation into a latent representation, and the receiver reconstructs the image from this corrupted observation. All reported results are computed on the validation split.
+
+We report four metrics. Peak signal-to-noise ratio, abbreviated as PSNR, measures pixel-level reconstruction accuracy. A higher PSNR means that the reconstructed image is closer to the original image. Structural similarity index measure, abbreviated as SSIM, measures perceptual structural similarity between the original and reconstructed images. A higher SSIM usually means that the reconstruction preserves more visible structure. Latent cosine similarity measures the angular similarity between clean and reconstructed latent features. Centered kernel alignment, abbreviated as CKA, measures feature-space similarity between latent representations. PSNR and SSIM are the primary image-quality metrics, while latent cosine similarity and CKA provide additional feature-level analysis.
+
+\subsection{Wireless Channel Models}
+\label{subsec:channel_models}
+
+The evaluation uses ten wireless channel conditions. Additive white Gaussian noise, abbreviated as AWGN, is a basic noise model in which independent Gaussian noise is added to the signal. Rayleigh fading is a wireless fading model without a strong direct propagation path. Rician fading is a fading model with a stronger direct path. Tapped delay line, abbreviated as TDL, represents multipath propagation with delayed signal copies. Clustered delay line, abbreviated as CDL, represents multipath propagation through clustered delay components. The urban, rural, highway, urban microcell, and urban macrocell settings represent practical channel scenarios with different propagation and mobility characteristics. Urban microcell is abbreviated as UMi, and urban macrocell is abbreviated as UMa.
+
+We also evaluate performance across signal-to-noise ratio levels. Signal-to-noise ratio, abbreviated as SNR, measures how strong the signal is relative to noise. Higher SNR means a cleaner channel, while lower SNR means a more difficult reconstruction problem. The SNR sweep uses $0$, $3$, $6$, $9$, $12$, $15$, $18$, and $20$ dB.
+
+\subsection{Compared Methods}
+\label{subsec:compared_methods}
+
+We compare the proposed method against several controlled variants. The \emph{base diffusion receiver} applies diffusion without using the learned channel token and serves as the main baseline. The \emph{tokenizer-conditioned receiver} uses the tokenizer-restored latent representation as the diffusion condition but does not use the learned token as a token condition. The \emph{no-token diffusion variant} uses the receiver output but replaces the learned token with a zero token. The \emph{proposed token-guided diffusion receiver} uses the receiver output and the learned token together.
+
+These variants are designed to answer specific questions. The base diffusion receiver provides the main non-token baseline. The no-token diffusion variant tests whether the learned token carries useful information. The tokenizer-conditioned receiver tests whether the restored latent representation alone is sufficient.
+
+\subsection{Main Reconstruction Results}
+\label{subsec:main_results}
+
+Table~\ref{tab:main_results} reports the mean result across all ten channel conditions. The proposed token-guided diffusion receiver achieves the best PSNR, with a mean PSNR of $23.836$ dB and a mean SSIM of $0.656$. Compared with the base diffusion receiver, the proposed method improves PSNR by $5.696$ dB and SSIM by $0.369$. Compared with the no-token diffusion variant, the proposed method improves PSNR by $6.747$ dB and SSIM by $0.416$. These gains show that the learned token provides important information to the diffusion refiner.
+
+\begin{table}[t]
+\centering
+\caption{Mean reconstruction performance across ten wireless channel conditions. Higher PSNR and SSIM indicate better image reconstruction quality.}
+\label{tab:main_results}
+\begin{tabular}{lcccc}
+\hline
+Method & PSNR $\uparrow$ & SSIM $\uparrow$ & Latent cosine $\uparrow$ & Latent CKA $\uparrow$ \\
+\hline
+Base diffusion receiver & 18.142 & 0.287 & 0.999753 & 0.925 \\
+No-token diffusion variant & 17.086 & 0.240 & 0.999687 & 0.900 \\
+Tokenizer-conditioned receiver & 17.085 & 0.240 & 0.999687 & 0.900 \\
+Proposed token-guided diffusion receiver & 23.832 & 0.656 & 0.999926 & 0.659 \\
+\hline
+\end{tabular}
+\end{table}
+
+The proposed method improves over the base diffusion receiver by $5.696$ dB in PSNR and $0.369$ in SSIM. It improves over the no-token diffusion variant by $6.747$ dB in PSNR and $0.416$ in SSIM. This large difference shows that the learned token is not merely an auxiliary output; it is a major source of reconstruction improvement when used by the diffusion refiner.
+
+\subsection{Channel-Level Results}
+\label{subsec:channel_level_results}
+
+Table~\ref{tab:channel_results} reports the PSNR of the main variants for each channel. The proposed token-guided diffusion receiver is consistently strong across all channel conditions. Its PSNR ranges from $23.153$ dB on the highway channel to $24.507$ dB on the CDL channel. The token gain is positive for every channel, ranging from $6.134$ dB to $7.252$ dB. This means that the learned token helps not only on simple noise channels, but also on fading, multipath, urban, rural, and mobility-related channels.
+
+\begin{table}[t]
+\centering
+\caption{Channel-level PSNR comparison. Token gain is the PSNR improvement of the proposed token-guided diffusion receiver over the no-token diffusion variant.}
+\label{tab:channel_results}
+\begin{tabular}{lcccc}
+\hline
+Channel & Base diffusion & No-token diffusion & Proposed receiver & Token gain \\
+\hline
+AWGN & 18.392 & 17.300 & 24.462 & 7.162 \\
+CDL & 18.360 & 17.256 & 24.507 & 7.252 \\
+Highway & 17.982 & 17.019 & 23.153 & 6.134 \\
+Rayleigh & 18.004 & 17.053 & 23.846 & 6.793 \\
+Rician & 18.295 & 17.226 & 24.277 & 7.050 \\
+Rural & 17.918 & 16.855 & 23.170 & 6.314 \\
+TDL & 18.182 & 17.101 & 23.962 & 6.860 \\
+UMa & 18.034 & 16.995 & 23.513 & 6.518 \\
+UMi & 18.196 & 17.130 & 24.055 & 6.924 \\
+Urban & 18.043 & 16.954 & 23.421 & 6.467 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Ablation Study}
+\label{subsec:ablation_results}
+
+An ablation study removes or changes one component at a time to measure how much that component contributes. Table~\ref{tab:ablation_results} reports the ablation results relative to the proposed token-guided diffusion receiver. Removing the learned token causes a $6.743$ dB PSNR drop. Using the tokenizer-restored latent representation without token-guided diffusion causes a similar $6.745$ dB PSNR drop. These two results show that the token must be explicitly used by the diffusion refiner to provide its full benefit.
+
+Removing vector quantization causes a $3.094$ dB PSNR drop. This shows that the discrete codebook-based token representation contributes meaningfully to reconstruction quality. Replacing the mixture-of-experts receiver with a single expert causes the largest degradation, with a $17.170$ dB PSNR drop. This indicates that adaptive expert routing is essential for handling diverse wireless channel conditions.
+
+\begin{table}[t]
+\centering
+\caption{Ablation results. Negative deltas indicate degradation relative to the proposed token-guided diffusion receiver.}
+\label{tab:ablation_results}
+\begin{tabular}{lcccc}
+\hline
+Ablation & PSNR & $\Delta$PSNR & SSIM & $\Delta$SSIM \\
+\hline
+Base diffusion receiver & 18.134 & -5.698 & 0.287 & -0.369 \\
+No learned token & 17.089 & -6.743 & 0.240 & -0.416 \\
+No vector quantization & 20.738 & -3.094 & 0.439 & -0.217 \\
+Single expert & 6.662 & -17.170 & 0.016 & -0.640 \\
+Tokenizer condition without token use & 17.086 & -6.745 & 0.240 & -0.416 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{SNR Sweep}
+\label{subsec:snr_sweep}
+
+The SNR sweep evaluates whether the learned token remains useful when the channel noise level changes. Table~\ref{tab:snr_results} reports the average gain of the proposed token-guided diffusion receiver over the no-token diffusion variant. The token improves reconstruction quality at every SNR level. The gain is $4.708$ dB at $0$ dB SNR and increases to $7.461$ dB at $20$ dB SNR. This shows that the learned token is robust under severe noise and becomes even more useful as the channel becomes cleaner.
+
+\begin{table}[t]
+\centering
+\caption{Average token gain across SNR levels. The gain is measured as the proposed token-guided diffusion receiver minus the no-token diffusion variant.}
+\label{tab:snr_results}
+\begin{tabular}{ccc}
+\hline
+SNR (dB) & PSNR gain & SSIM gain \\
+\hline
+0 & 4.708 & 0.362 \\
+3 & 5.399 & 0.379 \\
+6 & 5.993 & 0.395 \\
+9 & 6.517 & 0.409 \\
+12 & 6.922 & 0.420 \\
+15 & 7.196 & 0.427 \\
+18 & 7.385 & 0.432 \\
+20 & 7.461 & 0.434 \\
+\hline
+\end{tabular}
+\end{table}
+
+\subsection{Visual Comparison}
+\label{subsec:visual_comparison}
+
+We also include visual comparisons to show how the numerical improvements appear in reconstructed images. Figure~\ref{fig:visual_awgn}, Figure~\ref{fig:visual_rayleigh}, and Figure~\ref{fig:visual_uma} show representative samples under AWGN, Rayleigh fading, and UMa channel conditions. Each figure compares the original image, the channel-corrupted observation, the base diffusion receiver, the tokenizer-conditioned receiver, the no-token diffusion variant, and the proposed token-guided diffusion receiver.
+
+The visual samples are consistent with the quantitative results. The base diffusion receiver, tokenizer-conditioned receiver, and no-token diffusion variant recover some structure but contain severe texture artifacts. The proposed token-guided diffusion receiver provides sharper and more stable reconstructions. These visual results support the main conclusion that the learned token is most effective when it is used as a condition for diffusion refinement.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{paper_figures/channel_token_visual_awgn.png}
+    \caption{Visual comparison under the AWGN channel. The proposed token-guided diffusion receiver produces the most stable reconstructions among the diffusion-based variants.}
+    \label{fig:visual_awgn}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{paper_figures/channel_token_visual_rayleigh.png}
+    \caption{Visual comparison under the Rayleigh fading channel. The learned token helps the diffusion refiner recover clearer image content from fading-corrupted observations.}
+    \label{fig:visual_rayleigh}
+\end{figure}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\linewidth]{paper_figures/channel_token_visual_uma.png}
+    \caption{Visual comparison under the UMa channel. The proposed receiver remains effective under a cellular-style channel condition.}
+    \label{fig:visual_uma}
+\end{figure}
+
+\subsection{Summary of Findings}
+\label{subsec:experiment_summary}
+
+The experiments lead to four main findings. First, the proposed token-guided diffusion receiver gives the best overall PSNR across the tested wireless channels. Second, the learned token is responsible for a large part of the gain: removing the token reduces PSNR by approximately $6.7$ dB. Third, the tokenizer-restored latent representation alone is not sufficient; the token must be used by the diffusion refiner. Fourth, the vector-quantized codebook and mixture-of-experts receiver are both important, with the mixture-of-experts design being especially important for channel diversity. Overall, the results show that channel-aware tokenization, adaptive expert routing, and token-guided diffusion refinement work together to improve image reconstruction over wireless channels.

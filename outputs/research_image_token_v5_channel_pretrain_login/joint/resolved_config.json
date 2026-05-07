@@ -1,0 +1,134 @@
+{
+  "seed": 42,
+  "device": "cuda",
+  "require_cuda": true,
+  "output_dir": "outputs/research_image_token_v5_login/joint",
+  "stage": "joint",
+  "epochs": 100,
+  "batch_size": 4,
+  "val_batch_size": 4,
+  "num_workers": 6,
+  "save_every": 999999,
+  "val_every": 5,
+  "max_val_batches": 32,
+  "sampler_steps": 18,
+  "dataset": {
+    "train_root": "/scratch/nickyun/hf_datasets/ffhq_raw/train",
+    "val_root": "/scratch/nickyun/hf_datasets/ffhq_raw/val",
+    "img_size": 224
+  },
+  "model": {
+    "swin_ckpt": "diffusion_model_ckpt/v1_ckpt_ffhq_222_500_09.pt",
+    "diffusion_ckpt": "diffusion_model_ckpt/v2_edm_ffhq_ckpt_latent_222_470_10.pt",
+    "edm_variant": "pilotless",
+    "oracle_use_token": false,
+    "token_dim": 64,
+    "codebook_size": 1024,
+    "num_experts": 10,
+    "expert_rank": 12,
+    "freeze_edm_backbone": false
+  },
+  "resume": "outputs/research_image_token_v5_login/joint/ckpt_last.pt",
+  "channel_input_size": 64,
+  "optim": {
+    "lr_transport": 0.0002,
+    "lr_diffusion": 0.0001,
+    "lr_joint": 7.5e-05,
+    "lr_edm_multiplier": 0.05,
+    "weight_decay": 0.01,
+    "grad_clip_norm": 0.5
+  },
+  "loss": {
+    "lambda_vq": 0.35,
+    "lambda_router": 0.05,
+    "lambda_router_channel_cls": 0.2,
+    "lambda_diffusion": 1.0,
+    "lambda_image_recon": 0.1,
+    "lambda_h_privileged": 0.0,
+    "lambda_channel_cls": 0.25,
+    "lambda_aux": 0.05
+  },
+  "channel": {
+    "backend": "sionna",
+    "specs": [
+      {
+        "name": "awgn",
+        "probability": 0.18,
+        "snr_db_min": 0,
+        "snr_db_max": 20
+      },
+      {
+        "name": "rayleigh",
+        "probability": 0.18,
+        "snr_db_min": 0,
+        "snr_db_max": 20
+      },
+      {
+        "name": "rician",
+        "probability": 0.12,
+        "snr_db_min": 0,
+        "snr_db_max": 20,
+        "k_factor": 6.0
+      },
+      {
+        "name": "tdl",
+        "probability": 0.1,
+        "snr_db_min": 2,
+        "snr_db_max": 22,
+        "freq_selective": true,
+        "max_taps": 9
+      },
+      {
+        "name": "cdl",
+        "probability": 0.1,
+        "snr_db_min": 2,
+        "snr_db_max": 22,
+        "freq_selective": true,
+        "max_taps": 11
+      },
+      {
+        "name": "urban",
+        "probability": 0.1,
+        "snr_db_min": 2,
+        "snr_db_max": 22,
+        "k_factor": 6.0,
+        "phase_noise_std": 0.05,
+        "iq_gain_imbalance": 0.08
+      },
+      {
+        "name": "rural",
+        "probability": 0.08,
+        "snr_db_min": 4,
+        "snr_db_max": 24,
+        "freq_selective": true,
+        "max_taps": 7
+      },
+      {
+        "name": "highway",
+        "probability": 0.06,
+        "snr_db_min": 2,
+        "snr_db_max": 20,
+        "phase_noise_std": 0.08,
+        "impulsive_prob": 0.005,
+        "impulsive_scale": 6.0
+      },
+      {
+        "name": "umi",
+        "probability": 0.04,
+        "snr_db_min": 2,
+        "snr_db_max": 22,
+        "freq_selective": true,
+        "max_taps": 9
+      },
+      {
+        "name": "uma",
+        "probability": 0.04,
+        "snr_db_min": 2,
+        "snr_db_max": 22,
+        "freq_selective": true,
+        "max_taps": 11
+      }
+    ]
+  },
+  "login_run": true
+}

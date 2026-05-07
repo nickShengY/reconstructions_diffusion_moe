@@ -1,0 +1,47 @@
+{
+  "seed": 42,
+  "device": "cuda",
+  "require_cuda": true,
+  "output_dir": "outputs/research/diffusion",
+  "stage": "diffusion",
+  "epochs": 200,
+  "batch_size": 16,
+  "val_batch_size": 8,
+  "num_workers": 6,
+  "save_every": 10,
+  "val_every": 5,
+  "sampler_steps": 18,
+  "dataset": {
+    "train_root": "/scratch/nickyun/hf_datasets/ffhq_raw/train",
+    "val_root": "/scratch/nickyun/hf_datasets/ffhq_raw/val",
+    "img_size": 224
+  },
+  "model": {
+    "swin_ckpt": "diffusion_model_ckpt/v1_ckpt_ffhq_222_500_09.pt",
+    "token_dim": 64,
+    "codebook_size": 256,
+    "num_experts": 4,
+    "expert_rank": 8
+  },
+  "resume": "outputs/research/transport/ckpt_transport_200.pt",
+  "optim": {
+    "lr_transport": 0.0002,
+    "lr_diffusion": 0.0002,
+    "lr_joint": 0.0001
+  },
+  "loss": {
+    "lambda_vq": 0.1,
+    "lambda_router": 0.01,
+    "lambda_diffusion": 1.0
+  },
+  "channel": {
+    "backend": "sionna"
+  },
+  "eval": {
+    "modes": [
+      "transport",
+      "diffusion_no_token",
+      "diffusion_token"
+    ]
+  }
+}
