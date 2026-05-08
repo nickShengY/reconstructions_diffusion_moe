@@ -1,7 +1,7 @@
 
 # Reconstruction Diffusion MoE
 
-Research code for channel-aware image reconstruction with Swin autoencoding,
+Code for channel-aware image reconstruction with Swin autoencoding,
 channel tokenization, expert routing, and latent diffusion refinement.
 
 ## Repository Contents
@@ -19,9 +19,7 @@ channel tokenization, expert routing, and latent diffusion refinement.
 - `diffusion_model_ckpt/`: LFS-tracked model checkpoints.
 - `paper_figures/`: generated channel-token visualization figures.
 
-## Included Best Checkpoints
-
-The best v5 channel-pretrain login run is included through Git LFS:
+## Included Checkpoints
 
 - `outputs/research_image_token_v5_channel_pretrain_login/diffusion/ckpt_best.pt`
   - epoch 475, validation PSNR 24.596, SSIM 0.675
@@ -42,20 +40,6 @@ Channel-specific diffusion control checkpoints are also included:
   - AWGN-only control, same-channel PSNR 25.183, SSIM 0.681
 - `outputs/base_channel_diffusion_controls_login/rayleigh/diffusion/ckpt_best.pt`
   - Rayleigh-only control, same-channel PSNR 24.559, SSIM 0.679
-
-The full pipeline writeup is included at
-`outputs/research_image_token_v5_channel_pretrain_login/reports/pipeline_and_experiments_latex.txt`,
-and the channel-specific control report is included at
-`outputs/base_channel_diffusion_controls_login/reports/base_channel_diffusion_controls.md`.
-
-After cloning, install Git LFS and fetch the checkpoint contents:
-
-```bash
-git lfs install
-git lfs pull
-```
-
-## Setup
 
 ```bash
 python -m venv venv
