@@ -47,6 +47,14 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+Checkpoints are stored with Git LFS. After cloning, make sure the checkpoint
+files are downloaded before running evaluation:
+
+```bash
+git lfs install
+git lfs pull
+```
+
 ## Main Commands
 
 Transport stage:
@@ -70,5 +78,51 @@ python pipeline/train_research_system.py --config configs/research_train_joint_v
 Evaluation:
 
 ```bash
-python evaluation/evaluate_suite.py --config configs/research_eval_v2.json
+python evaluation/evaluate_suite.py \
+  --config configs/research_eval_v2.json \
+  --checkpoint outputs/research_image_token_v5_channel_pretrain_login/joint/ckpt_best.pt \
+  --output outputs/research_image_token_v5_channel_pretrain_login/eval
+```
+
+Visual samples matching the paper-style comparison:
+
+```bash
+python evaluation/generate_visual_samples.py \
+  --config configs/research_eval_v2.json \
+  --checkpoint outputs/research_image_token_v5_channel_pretrain_login/joint/ckpt_best.pt \
+  --channels awgn rayleigh uma \
+  --num-samples 4 \
+  --sampler-steps 18 \
+  --include-published \
+  --output outputs/research_image_token_v5_channel_pretrain_login/visual_samples
+```
+
+This command writes one contact sheet per channel. The important point is that
+`generate_visual_samples.py` expects the full receiver checkpoint when producing
+the token-guided visual comparison. Use
+`outputs/research_image_token_v5_channel_pretrain_login/joint/ckpt_best.pt`
+for this. Do not use the AWGN-only or Rayleigh-only diffusion-control
+checkpoints for the full token-guided visual sheet; those controls are
+diffusion-only baselines and are meaningful only in the baseline/noisy-latent
+diffusion mode.
+
+The `--include-published` flag adds the published unconditional EDM baseline
+from:
+
+```text
+diffusion_model_ckpt/v2_edm_ffhq_ckpt_latent_222_470_10.pt
+```
+
+Channel-specific diffusion-only controls can be evaluated separately:
+
+```bash
+python evaluation/evaluate_suite.py \
+  --config outputs/base_channel_diffusion_controls_login/awgn/diffusion/resolved_config.json \
+  --checkpoint outputs/base_channel_diffusion_controls_login/awgn/diffusion/ckpt_best.pt \
+  --output outputs/base_channel_diffusion_controls_login/awgn/eval
+
+python evaluation/evaluate_suite.py \
+  --config outputs/base_channel_diffusion_controls_login/rayleigh/diffusion/resolved_config.json \
+  --checkpoint outputs/base_channel_diffusion_controls_login/rayleigh/diffusion/ckpt_best.pt \
+  --output outputs/base_channel_diffusion_controls_login/rayleigh/eval
 ```
